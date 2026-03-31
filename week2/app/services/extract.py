@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import os
 import re
-from typing import List
 import json
-from typing import Any
+from typing import Any, List
 from ollama import chat
 from dotenv import load_dotenv
 
@@ -16,6 +15,17 @@ KEYWORD_PREFIXES = (
     "action:",
     "next:",
 )
+LLM_MODEL_NAME = os.getenv("OLLAMA_ACTION_ITEMS_MODEL", "llama3.1:8b")
+LLM_RESPONSE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "action_items": {
+            "type": "array",
+            "items": {"type": "string"},
+        }
+    },
+    "required": ["action_items"],
+}
 
 
 def _is_action_line(line: str) -> bool:
@@ -54,36 +64,16 @@ def extract_action_items(text: str) -> List[str]:
                 continue
             if _looks_imperative(s):
                 extracted.append(s)
-    # Deduplicate while preserving order
-    seen: set[str] = set()
-    unique: List[str] = []
-    for item in extracted:
-        lowered = item.lower()
-        if lowered in seen:
-            continue
-        seen.add(lowered)
-        unique.append(item)
-    return unique
+    return _dedupe_items(extracted)
 
 
 def extract_action_items_llm(text: str) -> List[str]:
     if not text or not text.strip():
         return []
 
-    schema: dict[str, Any] = {
-        "type": "object",
-        "properties": {
-            "action_items": {
-                "type": "array",
-                "items": {"type": "string"},
-            }
-        },
-        "required": ["action_items"],
-    }
-
     try:
         response = chat(
-            model="llama3.1:8b",
+            model=LLM_MODEL_NAME,
             messages=[
                 {
                     "role": "system",
@@ -101,36 +91,42 @@ def extract_action_items_llm(text: str) -> List[str]:
                     ),
                 },
             ],
-            format=schema,
+            format=LLM_RESPONSE_SCHEMA,
             options={"temperature": 0},
         )
         raw_content = response.message.content or ""
-        parsed = json.loads(raw_content)
-        if isinstance(parsed, dict):
-            candidates = parsed.get("action_items", [])
-        elif isinstance(parsed, list):
-            # Graceful handling if model returns a plain array.
-            candidates = parsed
-        else:
-            candidates = []
-
+        candidates = _parse_llm_action_items(raw_content)
         extracted = [str(item).strip() for item in candidates if str(item).strip()]
-        # Reuse existing normalization and dedupe behavior.
-        deduped: List[str] = []
-        seen: set[str] = set()
-        for item in extracted:
-            lowered = item.lower()
-            if lowered in seen:
-                continue
-            seen.add(lowered)
-            deduped.append(item)
-        return deduped
+        return _dedupe_items(extracted)
     except Exception as exc:
         print(
             f"LLM extraction failed; falling back to rule-based extraction: {exc}"
         )
         # Fallback to deterministic extractor when model output is unavailable/invalid.
         return extract_action_items(text)
+
+
+def _parse_llm_action_items(raw_content: str) -> list[Any]:
+    parsed = json.loads(raw_content)
+    if isinstance(parsed, dict):
+        items = parsed.get("action_items", [])
+        return items if isinstance(items, list) else []
+    if isinstance(parsed, list):
+        # Graceful handling if model returns a plain array.
+        return parsed
+    return []
+
+
+def _dedupe_items(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    unique: list[str] = []
+    for item in items:
+        lowered = item.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        unique.append(item)
+    return unique
 
 
 def _looks_imperative(sentence: str) -> bool:

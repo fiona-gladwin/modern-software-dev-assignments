@@ -16,8 +16,9 @@ def ensure_data_directory_exists() -> None:
 
 def get_connection() -> sqlite3.Connection:
     ensure_data_directory_exists()
-    connection = sqlite3.connect(DB_PATH)
+    connection = sqlite3.connect(DB_PATH, timeout=10)
     connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON;")
     return connection
 
 
@@ -104,7 +105,7 @@ def list_action_items(note_id: Optional[int] = None) -> list[sqlite3.Row]:
         return list(cursor.fetchall())
 
 
-def mark_action_item_done(action_item_id: int, done: bool) -> None:
+def mark_action_item_done(action_item_id: int, done: bool) -> bool:
     with get_connection() as connection:
         cursor = connection.cursor()
         cursor.execute(
@@ -112,5 +113,6 @@ def mark_action_item_done(action_item_id: int, done: bool) -> None:
             (1 if done else 0, action_item_id),
         )
         connection.commit()
+        return cursor.rowcount > 0
 
 
