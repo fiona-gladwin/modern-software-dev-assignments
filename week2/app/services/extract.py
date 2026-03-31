@@ -66,6 +66,73 @@ def extract_action_items(text: str) -> List[str]:
     return unique
 
 
+def extract_action_items_llm(text: str) -> List[str]:
+    if not text or not text.strip():
+        return []
+
+    schema: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "action_items": {
+                "type": "array",
+                "items": {"type": "string"},
+            }
+        },
+        "required": ["action_items"],
+    }
+
+    try:
+        response = chat(
+            model="llama3.1:8b",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You extract actionable todo items from notes. "
+                        "Return only valid JSON matching the schema."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "Extract action items from the following text. "
+                        "Keep each item concise and imperative.\n\n"
+                        f"Text:\n{text}"
+                    ),
+                },
+            ],
+            format=schema,
+            options={"temperature": 0},
+        )
+        raw_content = response.message.content or ""
+        parsed = json.loads(raw_content)
+        if isinstance(parsed, dict):
+            candidates = parsed.get("action_items", [])
+        elif isinstance(parsed, list):
+            # Graceful handling if model returns a plain array.
+            candidates = parsed
+        else:
+            candidates = []
+
+        extracted = [str(item).strip() for item in candidates if str(item).strip()]
+        # Reuse existing normalization and dedupe behavior.
+        deduped: List[str] = []
+        seen: set[str] = set()
+        for item in extracted:
+            lowered = item.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            deduped.append(item)
+        return deduped
+    except Exception as exc:
+        print(
+            f"LLM extraction failed; falling back to rule-based extraction: {exc}"
+        )
+        # Fallback to deterministic extractor when model output is unavailable/invalid.
+        return extract_action_items(text)
+
+
 def _looks_imperative(sentence: str) -> bool:
     words = re.findall(r"[A-Za-z']+", sentence)
     if not words:
