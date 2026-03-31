@@ -11,6 +11,15 @@ from ..schemas import NoteCreateRequest, NoteOut
 router = APIRouter(prefix="/notes", tags=["notes"])
 
 
+@router.get("")
+def list_notes() -> List[NoteOut]:
+    rows = db.list_notes()
+    return [
+        NoteOut(id=row["id"], content=row["content"], created_at=row["created_at"])
+        for row in rows
+    ]
+
+
 @router.post("")
 def create_note(payload: NoteCreateRequest) -> NoteOut:
     content = payload.content.strip()

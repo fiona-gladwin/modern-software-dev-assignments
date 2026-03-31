@@ -37,6 +37,24 @@ def extract(payload: ExtractActionItemsRequest) -> ExtractActionItemsResponse:
     )
 
 
+@router.post("/extract-llm")
+def extract_llm(payload: ExtractActionItemsRequest) -> ExtractActionItemsResponse:
+    text = payload.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+
+    note_id: Optional[int] = None
+    if payload.save_note:
+        note_id = db.insert_note(text)
+
+    items = extract_action_items_llm(text)
+    ids = db.insert_action_items(items, note_id=note_id)
+    return ExtractActionItemsResponse(
+        note_id=note_id,
+        items=[ActionItemOut(id=i, text=t) for i, t in zip(ids, items)],
+    )
+
+
 @router.get("")
 def list_all(note_id: Optional[int] = None) -> List[ActionItemListOut]:
     rows = db.list_action_items(note_id=note_id)
